@@ -1,0 +1,6 @@
+numpy
+pandas
+requests
+schedule
+tradingview-screener==2.5.0
+tvdatafeed @ git+https://github.com/rongardF/tvdatafeed
