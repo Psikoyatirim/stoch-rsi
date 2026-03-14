@@ -34,12 +34,10 @@ print(f"✅ Tarama sıklığı: Her 30 dakikada bir")
 
 
 def get_current_time():
-    """Türkiye saati ile formatlanmış zaman"""
     return datetime.now(TIMEZONE).strftime('%d.%m.%Y %H:%M:%S')
 
 
 def mesaj_at(bot_message, silent=False):
-    """Telegram grubuna mesaj gönder"""
     if not bot_token or not bot_chatID:
         print("⚠️ Telegram ayarları yapılmamış!")
         return None
@@ -64,7 +62,6 @@ def mesaj_at(bot_message, silent=False):
 
 
 def clean_data(data):
-    """Veriyi temizle ve düzelt"""
     try:
         if data is None or len(data) == 0:
             return None
@@ -81,13 +78,18 @@ def clean_data(data):
             data[col] = pd.to_numeric(data[col], errors='coerce')
 
         data = data.dropna(subset=required_columns)
-        data = data[(data['close'] > 0) & (data['open'] > 0) &
-                    (data['high'] > 0) & (data['low'] > 0) & (data['volume'] >= 0)]
-        data = data[(data['high'] >= data['low']) &
-                    (data['high'] >= data['close']) &
-                    (data['high'] >= data['open']) &
-                    (data['low'] <= data['close']) &
-                    (data['low'] <= data['open'])]
+        data = data[
+            (data['close'] > 0) & (data['open'] > 0) &
+            (data['high'] > 0) & (data['low'] > 0) &
+            (data['volume'] >= 0)
+        ]
+        data = data[
+            (data['high'] >= data['low']) &
+            (data['high'] >= data['close']) &
+            (data['high'] >= data['open']) &
+            (data['low'] <= data['close']) &
+            (data['low'] <= data['open'])
+        ]
 
         return data.reset_index(drop=True)
 
@@ -96,7 +98,6 @@ def clean_data(data):
 
 
 def safe_calculate_rsi(data, period=14):
-    """İyileştirilmiş RSI hesaplama"""
     try:
         if len(data) < period + 10:
             return pd.Series([50.0] * len(data), index=data.index)
@@ -104,8 +105,8 @@ def safe_calculate_rsi(data, period=14):
         close_prices = data['close'].copy()
         delta = close_prices.diff()
 
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
 
         avg_gain = gain.rolling(window=period, min_periods=period).mean()
         avg_loss = loss.rolling(window=period, min_periods=period).mean()
@@ -116,8 +117,7 @@ def safe_calculate_rsi(data, period=14):
 
         rs = avg_gain / avg_loss.replace(0, np.inf)
         rsi = 100 - (100 / (1 + rs))
-        rsi = rsi.clip(0, 100)
-        rsi = rsi.fillna(50)
+        rsi = rsi.clip(0, 100).fillna(50)
 
         return rsi
 
@@ -126,27 +126,23 @@ def safe_calculate_rsi(data, period=14):
 
 
 def safe_calculate_stoch_rsi(data, rsi_period=14, stoch_period=14, k_period=3, d_period=3):
-    """İyileştirilmiş StochRSI hesaplama"""
     try:
         min_required = rsi_period + stoch_period + k_period + d_period + 10
 
         if len(data) < min_required:
-            default_length = len(data)
+            n = len(data)
             return (
-                pd.Series([50.0] * default_length, index=data.index),
-                pd.Series([50.0] * default_length, index=data.index),
-                pd.Series([50.0] * default_length, index=data.index)
+                pd.Series([50.0] * n, index=data.index),
+                pd.Series([50.0] * n, index=data.index),
+                pd.Series([50.0] * n, index=data.index)
             )
 
         rsi = safe_calculate_rsi(data, rsi_period)
         rsi_min = rsi.rolling(window=stoch_period, min_periods=stoch_period).min()
         rsi_max = rsi.rolling(window=stoch_period, min_periods=stoch_period).max()
 
-        rsi_range = rsi_max - rsi_min
-        rsi_range = rsi_range.replace(0, np.nan)
-
-        stoch_rsi = ((rsi - rsi_min) / rsi_range * 100).fillna(50)
-        stoch_rsi = stoch_rsi.clip(0, 100)
+        rsi_range = (rsi_max - rsi_min).replace(0, np.nan)
+        stoch_rsi = ((rsi - rsi_min) / rsi_range * 100).fillna(50).clip(0, 100)
 
         k_line = stoch_rsi.rolling(window=k_period, min_periods=1).mean()
         d_line = k_line.rolling(window=d_period, min_periods=1).mean()
@@ -158,16 +154,15 @@ def safe_calculate_stoch_rsi(data, rsi_period=14, stoch_period=14, k_period=3, d
         return k_line, d_line, stoch_rsi
 
     except Exception:
-        default_length = len(data)
+        n = len(data)
         return (
-            pd.Series([50.0] * default_length, index=data.index),
-            pd.Series([50.0] * default_length, index=data.index),
-            pd.Series([50.0] * default_length, index=data.index)
+            pd.Series([50.0] * n, index=data.index),
+            pd.Series([50.0] * n, index=data.index),
+            pd.Series([50.0] * n, index=data.index)
         )
 
 
 def enhanced_StochRSI_Strategy(data):
-    """Geliştirilmiş StochRSI strateji"""
     try:
         if len(data) < 100:
             return None
@@ -181,59 +176,46 @@ def enhanced_StochRSI_Strategy(data):
 
         k_line, d_line, stoch_rsi = safe_calculate_stoch_rsi(df)
 
-        try:
-            k_below_50 = k_line < 50
-            k_above_d = k_line > d_line
-            k_was_below_d = k_line.shift(1) <= d_line.shift(1)
-            bullish_cross = k_above_d & k_was_below_d
-            k_rising = k_line > k_line.shift(1)
+        k_below_50 = k_line < 50
+        k_above_d = k_line > d_line
+        k_was_below_d = k_line.shift(1) <= d_line.shift(1)
+        bullish_cross = k_above_d & k_was_below_d
+        k_rising = k_line > k_line.shift(1)
 
-            primary_signal = k_below_50 & bullish_cross
-            strong_signal = primary_signal & k_rising
+        primary_signal = k_below_50 & bullish_cross
+        strong_signal = primary_signal & k_rising
 
-            df['k_line'] = k_line
-            df['d_line'] = d_line
-            df['stoch_rsi'] = stoch_rsi
-            df['k_below_50'] = k_below_50
-            df['bullish_cross'] = bullish_cross
-            df['k_rising'] = k_rising
-            df['primary_signal'] = primary_signal
-            df['strong_signal'] = strong_signal
-            df['Entry'] = primary_signal
+        df['k_line'] = k_line
+        df['d_line'] = d_line
+        df['stoch_rsi'] = stoch_rsi
+        df['bullish_cross'] = bullish_cross
+        df['k_rising'] = k_rising
+        df['primary_signal'] = primary_signal
+        df['strong_signal'] = strong_signal
+        df['Entry'] = primary_signal
 
-            return df
-
-        except Exception:
-            return None
+        return df
 
     except Exception:
         return None
 
 
-def enhanced_validate_data(data, symbol):
-    """Geliştirilmiş veri doğrulama"""
+def enhanced_validate_data(data):
     try:
-        if data is None:
-            return False
-
-        if len(data) < 100:
+        if data is None or len(data) < 100:
             return False
 
         required_columns = ['close', 'open', 'high', 'low', 'volume']
         for col in required_columns:
             if col not in data.columns:
                 return False
-
-        for col in required_columns:
             if not pd.api.types.is_numeric_dtype(data[col]):
                 return False
 
         if data[required_columns].isna().any().any():
             return False
-
         if (data['close'] <= 0).any() or (data['open'] <= 0).any():
             return False
-
         if (data['high'] < data['low']).any():
             return False
 
@@ -247,15 +229,14 @@ def enhanced_validate_data(data, symbol):
         return False
 
 
-def enhanced_get_hist(tv, symbol, exchange='BIST', interval=Interval.in_4_hour, n_bars=200, max_retries=3):
-    """Geliştirilmiş veri çekme"""
+def enhanced_get_hist(tv, symbol, max_retries=3):
     for attempt in range(max_retries):
         try:
             data = tv.get_hist(
                 symbol=symbol,
-                exchange=exchange,
-                interval=interval,
-                n_bars=n_bars
+                exchange='BIST',
+                interval=SELECTED_INTERVAL,
+                n_bars=SELECTED_BARS
             )
 
             if data is None:
@@ -268,22 +249,19 @@ def enhanced_get_hist(tv, symbol, exchange='BIST', interval=Interval.in_4_hour, 
                 time.sleep(1)
                 continue
 
-            if enhanced_validate_data(cleaned_data, symbol):
+            if enhanced_validate_data(cleaned_data):
                 return cleaned_data
-            else:
-                time.sleep(1)
-                continue
+
+            time.sleep(1)
 
         except Exception:
             if attempt < max_retries - 1:
                 time.sleep(2)
-            continue
 
     return None
 
 
 def main_enhanced(scan_number=1):
-    """Geliştirilmiş ana tarama - tek mesaj çıktı"""
     print(f"\n{'='*60}")
     print(f"🚀 TARAMA #{scan_number} BAŞLIYOR - {get_current_time()}")
     print(f"{'='*60}")
@@ -293,141 +271,121 @@ def main_enhanced(scan_number=1):
         print("✅ TradingView bağlantısı kuruldu")
     except Exception as e:
         print(f"❌ TradingView bağlantı hatası: {e}")
-        return None, None
+        return
 
     try:
-        Hisseler = get_all_symbols(market='turkey')
-        Hisseler = [symbol.replace('BIST:', '') for symbol in Hisseler]
-
-        problematic = ['REEDR', 'VESTL', 'YAPRK']
-        Hisseler = [h for h in Hisseler if h not in problematic]
-        Hisseler = sorted(Hisseler)
-
-        print(f"📊 Toplam {len(Hisseler)} hisse taranacak")
-
+        hisseler = get_all_symbols(market='turkey')
+        hisseler = [s.replace('BIST:', '') for s in hisseler]
+        hisseler = [h for h in hisseler if h not in ['REEDR', 'VESTL', 'YAPRK']]
+        hisseler = sorted(hisseler)
+        print(f"📊 Toplam {len(hisseler)} hisse taranacak")
     except Exception as e:
         print(f"❌ Hisse listesi alınamadı: {e}")
-        return None, None
+        return
 
-    Titles = ['Hisse', 'Fiyat', 'Sinyal', 'K', 'D', 'StochRSI', 'Tür', 'Durum', 'Veri_Sayısı']
-    df_signals = pd.DataFrame(columns=Titles)
+    signals = []
+    successful = 0
+    failed = 0
 
-    successful_scans = 0
-    failed_scans = 0
-
-    for i, hisse in enumerate(Hisseler, 1):
+    for i, hisse in enumerate(hisseler, 1):
         if i % 50 == 1:
-            print(f"📈 [{i}/{len(Hisseler)}] İşleniyor...")
+            print(f"📈 [{i}/{len(hisseler)}] İşleniyor...")
 
         try:
-            data = enhanced_get_hist(tv, hisse, interval=SELECTED_INTERVAL, n_bars=SELECTED_BARS)
+            data = enhanced_get_hist(tv, hisse)
 
             if data is None:
-                failed_scans += 1
-                df_signals.loc[len(df_signals)] = [hisse, 0, False, 0, 0, 0, "VERİ HATASI", "BAŞARISIZ", 0]
+                failed += 1
                 continue
 
             result = enhanced_StochRSI_Strategy(data)
 
-            if result is None:
-                failed_scans += 1
-                df_signals.loc[len(df_signals)] = [hisse, 0, False, 0, 0, 0, "ANALİZ HATASI", "BAŞARISIZ", len(data)]
+            if result is None or len(result) < 5:
+                failed += 1
                 continue
 
-            if len(result) >= 5:
-                last_row = result.iloc[-1]
-                prev_row = result.iloc[-2]
+            last = result.iloc[-1]
+            prev = result.iloc[-2]
 
-                last_price = float(last_row['close'])
-                k_val = float(last_row['k_line'])
-                d_val = float(last_row['d_line'])
-                stoch_rsi_val = float(last_row['stoch_rsi'])
+            last_price = float(last['close'])
+            k_val = float(last['k_line'])
+            d_val = float(last['d_line'])
 
-                current_signal = bool(last_row['Entry'])
-                prev_signal = bool(prev_row['Entry'])
-                new_signal = current_signal and not prev_signal
+            # Boolean değerleri güvenli karşılaştır
+            current_signal = bool(last['Entry'])
+            prev_signal = bool(prev['Entry'])
+            new_signal = current_signal and not prev_signal
+            strong_signal = bool(last['strong_signal'])
 
-                strong_current = bool(last_row['strong_signal'])
-                signal_type = "GÜÇLÜ" if strong_current else ("YENİ" if new_signal else "YOK")
+            successful += 1
 
-                df_signals.loc[len(df_signals)] = [hisse, last_price, new_signal, k_val, d_val, stoch_rsi_val, signal_type, "BAŞARILI", len(data)]
-                successful_scans += 1
-
-                if new_signal:
-                    print(f"  🚨 SİNYAL: {hisse} - {last_price:.2f}₺ - K:{k_val:.1f} D:{d_val:.1f}")
-            else:
-                failed_scans += 1
-                df_signals.loc[len(df_signals)] = [hisse, 0, False, 0, 0, 0, "YETERSİZ", "BAŞARISIZ", len(data)]
+            if new_signal:
+                signal_type = "GÜÇLÜ" if strong_signal else "YENİ"
+                signals.append({
+                    'hisse': hisse,
+                    'fiyat': last_price,
+                    'k': k_val,
+                    'd': d_val,
+                    'tur': signal_type
+                })
+                print(f"  🚨 SİNYAL: {hisse} - {last_price:.2f}₺ - K:{k_val:.1f} D:{d_val:.1f}")
 
             time.sleep(0.3)
 
         except KeyboardInterrupt:
-            print("\n\n❌ Kullanıcı tarafından durduruldu!")
             raise
         except Exception:
-            failed_scans += 1
-            df_signals.loc[len(df_signals)] = [hisse, 0, False, 0, 0, 0, "HATA", "BAŞARISIZ", 0]
-
-    df_signals_with_data = df_signals[df_signals['Sinyal'] == True]
+            failed += 1
 
     print(f"\n🎯 SONUÇLAR:")
-    print(f"📊 Toplam: {len(Hisseler)}")
-    print(f"✅ Başarılı: {successful_scans}")
-    print(f"❌ Başarısız: {failed_scans}")
-    print(f"🚨 Sinyal: {len(df_signals_with_data)}")
+    print(f"✅ Başarılı: {successful} | ❌ Başarısız: {failed} | 🚨 Sinyal: {len(signals)}")
 
-    current_time = get_current_time()
-    message = f"📊 *BIST StochRSI Tarama Sonuçları*\n"
-    message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    message += f"🕐 *Tarih:* {current_time}\n"
-    message += f"⏰ *Saat Dilimi:* Türkiye (GMT+3)\n"
-    message += f"📈 *Interval:* {INTERVAL_NAME}\n"
-    message += f"🔢 *Tarama #:* {scan_number}\n\n"
-    message += f"📋 *Özet:*\n"
-    message += f"   • Toplam Hisse: {len(Hisseler)}\n"
-    message += f"   • Başarılı Tarama: {successful_scans}\n"
-    message += f"   • Başarısız Tarama: {failed_scans}\n"
-    message += f"   • Başarı Oranı: {(successful_scans/len(Hisseler)*100):.1f}%\n\n"
+    msg = (
+        f"📊 *BIST StochRSI Tarama Sonuçları*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🕐 *Tarih:* {get_current_time()}\n"
+        f"📈 *Interval:* {INTERVAL_NAME}\n"
+        f"🔢 *Tarama #:* {scan_number}\n\n"
+        f"📋 *Özet:*\n"
+        f"   • Toplam Hisse: {len(hisseler)}\n"
+        f"   • Başarılı: {successful}\n"
+        f"   • Başarısız: {failed}\n"
+        f"   • Başarı Oranı: {(successful/len(hisseler)*100):.1f}%\n\n"
+    )
 
-    if len(df_signals_with_data) > 0:
-        message += f"🚨 *{len(df_signals_with_data)} SİNYAL TESPİT EDİLDİ!*\n"
-        message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-
-        for idx, row in df_signals_with_data.iterrows():
-            emoji = "🔥" if row['Tür'] == "GÜÇLÜ" else "📈"
-            message += f"{emoji} *{row['Hisse']}* - {row['Fiyat']:.2f}₺\n"
-            message += f"   K: {row['K']:.1f} | D: {row['D']:.1f} | Tür: {row['Tür']}\n\n"
+    if signals:
+        msg += f"🚨 *{len(signals)} SİNYAL TESPİT EDİLDİ!*\n"
+        msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        for s in signals:
+            emoji = "🔥" if s['tur'] == "GÜÇLÜ" else "📈"
+            msg += f"{emoji} *{s['hisse']}* - {s['fiyat']:.2f}₺\n"
+            msg += f"   K: {s['k']:.1f} | D: {s['d']:.1f} | Tür: {s['tur']}\n\n"
     else:
-        message += f"ℹ️ *Bu taramada sinyal bulunamadı*\n"
-        message += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        msg += f"ℹ️ *Bu taramada sinyal bulunamadı*\n"
+        msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 
-    message += f"\n⏰ *Sonraki tarama 30 dakika sonra...*"
-
-    mesaj_at(message)
-
-    return df_signals, df_signals_with_data
+    msg += f"\n⏰ *Sonraki tarama 30 dakika sonra...*"
+    mesaj_at(msg)
 
 
 def continuous_scan():
-    """30 dakikada bir otomatik tarama"""
     scan_count = 0
 
-    start_msg = f"🤖 *Otomatik Tarama Başladı*\n"
-    start_msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    start_msg += f"📅 {get_current_time()}\n"
-    start_msg += f"⏰ Saat Dilimi: Türkiye (GMT+3)\n"
-    start_msg += f"📈 Interval: {INTERVAL_NAME}\n"
-    start_msg += f"🔄 Tarama Sıklığı: 30 dakika\n"
+    start_msg = (
+        f"🤖 *Otomatik Tarama Başladı*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📅 {get_current_time()}\n"
+        f"⏰ Saat Dilimi: Türkiye (GMT+3)\n"
+        f"📈 Interval: {INTERVAL_NAME}\n"
+        f"🔄 Tarama Sıklığı: 30 dakika"
+    )
     mesaj_at(start_msg)
 
     while True:
         scan_count += 1
-
-        df_signals, df_true = main_enhanced(scan_number=scan_count)
-
-        print(f"\n⏳ 30 dakika bekleniyor... (Tarama #{scan_count} tamamlandı)")
-        print(f"⏰ Sonraki tarama: {(datetime.now(TIMEZONE) + pd.Timedelta(minutes=30)).strftime('%H:%M:%S')}\n")
-
+        main_enhanced(scan_number=scan_count)
+        next_time = (datetime.now(TIMEZONE) + pd.Timedelta(minutes=30)).strftime('%H:%M:%S')
+        print(f"\n⏳ 30 dakika bekleniyor... Sonraki tarama: {next_time}\n")
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 
@@ -436,11 +394,16 @@ def continuous_scan():
 # ============================
 if __name__ == "__main__":
     print("\n" + "="*60)
-    print("🚀 BIST StochRSI Otomatik Tarayıcı v4.0")
+    print("🚀 BIST StochRSI Otomatik Tarayıcı v4.1")
     print(f"📈 Mod: {INTERVAL_NAME} | Otomatik (30dk)")
     print("="*60)
 
-    test_msg = f"✅ *Bot Aktif*\n📅 {get_current_time()}\n⏰ Türkiye Saati (GMT+3)\n📈 {INTERVAL_NAME} otomatik tarama başlıyor..."
+    test_msg = (
+        f"✅ *Bot Aktif*\n"
+        f"📅 {get_current_time()}\n"
+        f"⏰ Türkiye Saati (GMT+3)\n"
+        f"📈 {INTERVAL_NAME} otomatik tarama başlıyor..."
+    )
     mesaj_at(test_msg, silent=True)
 
     continuous_scan()
